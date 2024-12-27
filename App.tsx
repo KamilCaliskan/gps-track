@@ -1,45 +1,113 @@
 import React, { useState, useEffect } from 'react';
-import { SafeAreaView, Text, PermissionsAndroid, Platform } from 'react-native';
+import { View, Text, PermissionsAndroid, Platform, StyleSheet } from 'react-native';
+import MapView, { Marker } from 'react-native-maps';
 import Geolocation from 'react-native-geolocation-service';
-import { request, PERMISSIONS, RESULTS } from 'react-native-permissions';
+import axios from 'axios';
 
 const App = () => {
-  const [location, setLocation] = useState(null);
+  const [location, setLocation] = useState<any>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    const getLocation = async () => {
+    const requestLocationPermission = async () => {
       if (Platform.OS === 'android') {
-        const granted = await request(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION);
-        if (granted === RESULTS.GRANTED) {
-          Geolocation.getCurrentPosition(
-            (position) => setLocation(position),
-            (error) => console.log(error),
-            { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
-          );
+        const fineLocationGranted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+
+        const backgroundLocationGranted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION
+        );
+
+        if (
+          fineLocationGranted === PermissionsAndroid.RESULTS.GRANTED &&
+          backgroundLocationGranted === PermissionsAndroid.RESULTS.GRANTED
+        ) {
+          trackUserLocation();
         } else {
-          console.log('Location permission denied');
+          setErrorMsg('Location permissions denied');
         }
       } else {
-        Geolocation.getCurrentPosition(
-          (position) => setLocation(position),
-          (error) => console.log(error),
-          { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
-        );
+        trackUserLocation();
       }
     };
-    getLocation();
+
+    const trackUserLocation = () => {
+      Geolocation.watchPosition(
+        (position) => {
+          setLocation(position);
+          sendLocationToServer(position); // Send location updates to the server
+        },
+        (error) => {
+          console.error(error);
+          setErrorMsg('Error fetching location');
+        },
+        {
+          enableHighAccuracy: true,
+          distanceFilter: 10,
+          interval: 10000,
+          fastestInterval: 5000,
+        }
+      );
+    };
+
+    requestLocationPermission();
   }, []);
 
+  const sendLocationToServer = async (position: any) => {
+    try {
+      await axios.post('http://your-api-url.com/location', {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        speed: position.coords.speed,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Failed to send location to server:', error);
+    }
+  };
+
   return (
-    <SafeAreaView>
-      <Text>GPS Location:</Text>
+    <View style={styles.container}>
       {location ? (
-        <Text>Latitude: {location.coords.latitude}</Text>
+        <MapView
+          style={styles.map}
+          initialRegion={{
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          }}
+        >
+          <Marker
+            coordinate={{
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+            }}
+            title="You are here"
+          />
+        </MapView>
       ) : (
-        <Text>Loading location...</Text>
+        <View style={styles.loading}>
+          {errorMsg ? <Text>{errorMsg}</Text> : <Text>Fetching location...</Text>}
+        </View>
       )}
-    </SafeAreaView>
+    </View>
   );
 };
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  map: {
+    flex: 1,
+  },
+  loading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+});
 
 export default App;
