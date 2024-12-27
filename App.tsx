@@ -1,113 +1,78 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, PermissionsAndroid, Platform, StyleSheet } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  PermissionsAndroid,
+  Platform,
+  Button,
+} from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
-import axios from 'axios';
+import { sendLocation } from './src/services/apiService';
+import { generateMockLocation } from './src/services/gpsMock';
 
 const App = () => {
-  const [location, setLocation] = useState<any>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [location, setLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    speed: number | null;
+  } | null>(null);
 
-  useEffect(() => {
-    const requestLocationPermission = async () => {
-      if (Platform.OS === 'android') {
-        const fineLocationGranted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
-        );
+  const [isTracking, setIsTracking] = useState<boolean>(false);
 
-        const backgroundLocationGranted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION
-        );
+  // Request location permissions
+  const requestLocationPermission = async () => {
+    if (Platform.OS === 'android') {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+      );
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    }
+    return true; // iOS permissions are handled automatically
+  };
 
-        if (
-          fineLocationGranted === PermissionsAndroid.RESULTS.GRANTED &&
-          backgroundLocationGranted === PermissionsAndroid.RESULTS.GRANTED
-        ) {
-          trackUserLocation();
-        } else {
-          setErrorMsg('Location permissions denied');
-        }
-      } else {
-        trackUserLocation();
-      }
-    };
+  // Start GPS tracking
+  const startTracking = async () => {
+    const hasPermission = await requestLocationPermission();
+    if (!hasPermission) {
+      console.log('Location permission denied');
+      return;
+    }
 
-    const trackUserLocation = () => {
+    setIsTracking(true);
+
+    if (Platform.OS === 'android' || Platform.OS === 'ios') {
       Geolocation.watchPosition(
         (position) => {
-          setLocation(position);
-          sendLocationToServer(position); // Send location updates to the server
+          setLocation({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            speed: position.coords.speed,
+          });
         },
         (error) => {
           console.error(error);
-          setErrorMsg('Error fetching location');
         },
-        {
-          enableHighAccuracy: true,
-          distanceFilter: 10,
-          interval: 10000,
-          fastestInterval: 5000,
-        }
+        { enableHighAccuracy: true, distanceFilter: 0 }
       );
-    };
+    } else {
+      // Mock location for testing in non-mobile environments
+      const intervalId = setInterval(() => {
+        setLocation(generateMockLocation());
+      }, 1000);
 
-    requestLocationPermission();
-  }, []);
-
-  const sendLocationToServer = async (position: any) => {
-    try {
-      await axios.post('http://your-api-url.com/location', {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        speed: position.coords.speed,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.error('Failed to send location to server:', error);
+      return () => clearInterval(intervalId);
     }
   };
 
-  return (
-    <View style={styles.container}>
-      {location ? (
-        <MapView
-          style={styles.map}
-          initialRegion={{
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-            latitudeDelta: 0.01,
-            longitudeDelta: 0.01,
-          }}
-        >
-          <Marker
-            coordinate={{
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-            }}
-            title="You are here"
-          />
-        </MapView>
-      ) : (
-        <View style={styles.loading}>
-          {errorMsg ? <Text>{errorMsg}</Text> : <Text>Fetching location...</Text>}
-        </View>
-      )}
-    </View>
-  );
-};
+  // Stop GPS tracking
+  const stopTracking = () => {
+    Geolocation.stopObserving();
+    setIsTracking(false);
+  };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  map: {
-    flex: 1,
-  },
-  loading: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-});
-
-export default App;
+  // Send location to API server
+  useEffect(() => {
+    if (location) {
+      sendLocation(location);
+    }
